@@ -72,10 +72,15 @@ vec3 diskColor(vec3 p, float r) {
   return col * intensity * 2.2;
 }
 
-vec3 traceRay(vec3 ro, vec3 rd) {
+vec3 traceRay(vec3 ro, vec3 rd, vec2 screenUv) {
   vec3 pos = ro;
   vec3 dir = normalize(rd);
   vec3 accum = vec3(0.0);
+
+  // dither the step size per-pixel so raymarch quantization turns into
+  // fine grain noise instead of visible concentric rings (moiré banding)
+  float jitter = hash(screenUv * uResolution.xy + uTime);
+  float stepSize = STEP_SIZE * (0.85 + 0.3 * jitter);
 
   for (int i = 0; i < STEPS; i++) {
     float r = length(pos);
@@ -86,15 +91,15 @@ vec3 traceRay(vec3 ro, vec3 rd) {
 
     vec3 toCenter = -pos;
     float pull = uBlackHoleRadius * 2.2 / (r * r * r + 0.001);
-    dir = normalize(dir + toCenter * pull * STEP_SIZE);
+    dir = normalize(dir + toCenter * pull * stepSize);
 
-    pos += dir * STEP_SIZE;
+    pos += dir * stepSize;
 
     float diskHeight = 0.06 + 0.02 * sin(uTime * 0.3 + r);
     if (abs(pos.y) < diskHeight && r > uDiskInner && r < uDiskOuter) {
       vec3 c = diskColor(pos, r);
       float density = 1.0 - abs(pos.y) / diskHeight;
-      accum += c * density * STEP_SIZE * 1.6;
+      accum += c * density * stepSize * 1.6;
     }
 
     if (r > uDiskOuter * 3.0) {
@@ -107,7 +112,15 @@ vec3 traceRay(vec3 ro, vec3 rd) {
 
 void main() {
   vec2 uv = (vUv - 0.5) * 2.0;
-  uv.x *= uResolution.x / uResolution.y;
+
+  // fit-to-screen: landscape widens X, portrait widens Y — keeps framing
+  // consistent instead of cropping/zooming on tall phone screens
+  float aspect = uResolution.x / uResolution.y;
+  if (aspect < 1.0) {
+    uv.y /= aspect;
+  } else {
+    uv.x *= aspect;
+  }
 
   vec3 ro = uCamPos;
   vec3 forward = normalize(-ro);
@@ -118,7 +131,7 @@ void main() {
   float fov = 1.1;
   vec3 rd = normalize(forward + uv.x * fov * right + uv.y * fov * up);
 
-  vec3 color = traceRay(ro, rd);
+  vec3 color = traceRay(ro, rd, vUv);
 
   float star = pow(fbm(uv * 40.0 + uTime * 0.01), 20.0);
   color += vec3(star);
